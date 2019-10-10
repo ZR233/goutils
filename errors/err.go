@@ -6,6 +6,9 @@ package errors
 
 import "golang.org/x/xerrors"
 
+//可用函数
+var F = Utils{}
+
 type Type int
 
 var typeMessageMap_ map[Type]string
@@ -36,24 +39,27 @@ func (e *Error) Code() int {
 	return int(e.errType)
 }
 
-func Wrap(err error) *Error {
+type Utils struct {
+}
+
+func (u Utils) Wrap(err error) *Error {
 	if err_, ok := err.(*Error); ok {
 		err_.trace = xerrors.Errorf("%w", err_.trace)
 		return err_
 	} else {
-		e := New(UnknownType)
+		e := F.New(UnknownType)
 		return e
 	}
 }
 
-func New(errType Type) *Error {
+func (u Utils) New(errType Type) *Error {
 	err := &Error{}
 	err.errType = errType
 	err.trace = xerrors.New(err.Error())
 	return err
 }
 
-func Equal(err error, errType Type) bool {
+func (u Utils) Equal(err error, errType Type) bool {
 	if err_, ok := err.(*Error); ok {
 		return err_.errType == errType
 	}
