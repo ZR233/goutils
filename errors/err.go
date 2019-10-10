@@ -14,6 +14,7 @@ type Type int
 var typeMessageMap_ map[Type]string
 
 type Error struct {
+	message string
 	errType Type
 	trace   error
 }
@@ -26,6 +27,10 @@ func SetErrorTypeMessageMap(typeMessageMap map[Type]string) {
 }
 
 func (e *Error) Error() string {
+	if e.message != "" {
+		return e.message
+	}
+
 	if v, ok := typeMessageMap_[e.errType]; ok {
 		return v
 	} else {
@@ -47,15 +52,19 @@ func (u Utils) Wrap(err error) *Error {
 		err_.trace = xerrors.Errorf("%w", err_.trace)
 		return err_
 	} else {
-		e := F.New(UnknownType)
+		e := F.New(UnknownType, err.Error())
 		return e
 	}
 }
 
-func (u Utils) New(errType Type) *Error {
+func (u Utils) New(errType Type, msg string) *Error {
 	err := &Error{}
 	err.errType = errType
-	err.trace = xerrors.New(err.Error())
+	if msg == "" {
+		msg = err.Error()
+	}
+
+	err.trace = xerrors.New(msg)
 	return err
 }
 
