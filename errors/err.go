@@ -4,7 +4,9 @@
 */
 package errors
 
-import "golang.org/x/xerrors"
+import (
+	"runtime/debug"
+)
 
 //可用函数
 var F = Utils{}
@@ -16,7 +18,7 @@ var typeMessageMap_ map[Type]string
 type Error struct {
 	message string
 	errType Type
-	trace   error
+	trace   string
 }
 
 const UnknownType Type = -1
@@ -38,7 +40,7 @@ func (e *Error) Error() string {
 	}
 }
 func (e *Error) Trace() string {
-	return e.trace.Error()
+	return e.trace
 }
 func (e *Error) Code() int {
 	return int(e.errType)
@@ -49,10 +51,10 @@ type Utils struct {
 
 func (u Utils) Wrap(err error) *Error {
 	if err_, ok := err.(*Error); ok {
-		err_.trace = xerrors.Errorf("%w", err_.trace)
 		return err_
 	} else {
 		e := F.New(UnknownType, err.Error())
+		err_.trace = string(debug.Stack())
 		return e
 	}
 }
@@ -62,9 +64,11 @@ func (u Utils) New(errType Type, msg string) *Error {
 	err.errType = errType
 	if msg == "" {
 		msg = err.Error()
+	} else {
+		err.message = msg
 	}
-
-	err.trace = xerrors.New(msg)
+	err.trace = string(debug.Stack())
+	//err.trace = xerrors.New(msg)
 	return err
 }
 
