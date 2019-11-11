@@ -83,3 +83,12 @@ func (s *StdError) DebugMessage() string {
 		return s.debugMsg
 	}
 }
+func (Utils) Equal(err error, errorType *ErrorType) bool {
+	if err != nil {
+		if err_, ok := err.(*StdError); ok {
+			return err_.code == errorType.code
+		}
+	}
+
+	return false
+}
