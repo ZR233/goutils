@@ -19,8 +19,8 @@ type Utils struct {
 
 type ErrorType struct {
 	code     int
-	showMsg  string
-	debugMsg string
+	ShowMsg  string
+	DebugMsg string
 }
 
 func (Utils) NewErrorType(code int, showMsg, debugMsg string) *ErrorType {
@@ -33,10 +33,10 @@ func (Utils) NewErrorType(code int, showMsg, debugMsg string) *ErrorType {
 
 type StdError struct {
 	*ErrorType
-	msg   string
 	trace string
 }
 
+//将error转为*StdError, 若无法转换，则通过error生成一个*StdError，类型为errorType
 func (Utils) FromError(err error, errorType *ErrorType) (stdErr *StdError) {
 	if err != nil {
 		ok := false
@@ -53,35 +53,44 @@ func (Utils) FromError(err error, errorType *ErrorType) (stdErr *StdError) {
 	return
 }
 
-func (Utils) NewStdError(errorType *ErrorType, msg string) *StdError {
+//生成一个错误
+func (Utils) NewStdError(errorType *ErrorType, debugMsg string) *StdError {
+	return U.NewStdErrorWarpInFunc(errorType, debugMsg, 0)
+}
+
+//生成一个错误
+// @warpCount 错误出现位置忽略层级。用于被封装后，在调用堆栈中忽略封装函数名
+func (Utils) NewStdErrorWarpInFunc(errorType *ErrorType, debugMsg string, warpCount int) *StdError {
 	trace := string(debug.Stack())
 	traceArr := strings.Split(trace, "\n")
-	traceArr_ := append(traceArr[:1], traceArr[5:]...)
+	level := 5 + warpCount*2
 
+	traceArr_ := append(traceArr[:1], traceArr[level:]...)
 	trace = strings.Join(traceArr_, "\n")
-	return &StdError{
+
+	e := &StdError{
 		errorType,
-		msg,
 		trace,
 	}
+
+	if debugMsg != "" {
+		e.DebugMsg = debugMsg
+	}
+	return e
 }
 
 func (s *StdError) Code() int {
 	return s.code
 }
 func (s *StdError) Error() string {
-	return s.showMsg
+	return s.ShowMsg
 }
 func (s *StdError) Trace() string {
 	return s.trace
 }
 
 func (s *StdError) DebugMessage() string {
-	if s.msg != "" {
-		return s.msg
-	} else {
-		return s.debugMsg
-	}
+	return s.DebugMsg
 }
 func (Utils) Equal(err error, errorType *ErrorType) bool {
 	if err != nil {
@@ -91,4 +100,7 @@ func (Utils) Equal(err error, errorType *ErrorType) bool {
 	}
 
 	return false
+}
+func (e *ErrorType) Equal(err error) bool {
+	return U.Equal(err, e)
 }
