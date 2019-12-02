@@ -35,6 +35,7 @@ type Pool struct {
 
 type connStatus struct {
 	createTime time.Time
+	using      bool
 }
 
 type config struct {
@@ -99,13 +100,11 @@ func NewPool(factory ConnFactory, errorHandler ErrorHandler, connTestFunc ConnTe
 	}
 	p := &Pool{
 		config: cfg,
-		queue:  make(chan io.Closer, cfg.maxOpen),
 		pool:   map[io.Closer]*connStatus{},
+		queue:  make(chan io.Closer, cfg.maxOpen),
 	}
 
-	for i := 0; i < p.config.minOpen; i++ {
-		p.create()
-	}
+	p.create()
 
 	return p, nil
 }
@@ -114,35 +113,33 @@ func (p *Pool) Acquire() (io.Closer, error) {
 	if p.closed {
 		return nil, ErrPoolClosed
 	}
-	go p.create()
+	select {
+	case closer := <-p.queue:
+		if p.config.connTestFunc(closer) {
+			return closer, nil
+		} else {
+			p.Close(closer)
+		}
+	default:
+	}
+
+	p.create()
 	for {
 		select {
 		case closer := <-p.queue:
-			if !p.config.connTestFunc(closer) {
-				p.Close(closer)
-				go p.create()
-				continue
+			if p.config.connTestFunc(closer) {
+				return closer, nil
 			}
+			p.Close(closer)
+			p.create()
 
-			return closer, nil
 		case <-time.After(p.config.getConnWaitDeadline):
 			return nil, ErrGetConnTimeout
 		}
 	}
-
 }
 
-func (p *Pool) create() {
-	p.Lock()
-	defer p.Unlock()
-	if p.closed {
-		return
-	}
-
-	if p.numOpen >= p.config.maxOpen {
-		return
-	}
-
+func (p *Pool) createOne() {
 	// 新建连接
 	closer, err := p.config.factory()
 	if err != nil {
@@ -158,8 +155,29 @@ func (p *Pool) create() {
 	p.pool[closer] = &connStatus{
 		createTime: time.Now(),
 	}
-
 	p.queue <- closer
+}
+
+func (p *Pool) createWithNoLock() {
+	if p.closed {
+		return
+	}
+
+	if p.numOpen >= p.config.maxOpen {
+		return
+	}
+
+	p.createOne()
+
+	for p.numOpen < p.config.minOpen {
+		p.createOne()
+	}
+}
+
+func (p *Pool) create() {
+	p.Lock()
+	defer p.Unlock()
+	p.createWithNoLock()
 }
 
 func (p *Pool) Close(closer io.Closer) {

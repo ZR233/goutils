@@ -1,7 +1,6 @@
 package conn_pool
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -25,11 +24,13 @@ func TestPool_Release(t *testing.T) {
 }
 
 type testCloser struct {
-	id int64
+	id     int64
+	closed bool
 }
 
-func (t testCloser) Close() error {
+func (t *testCloser) Close() error {
 	fmt.Printf("%d close", t.id)
+	t.closed = true
 	return nil
 }
 
@@ -39,6 +40,7 @@ func testFactory() ConnFactory {
 	return func() (closer io.Closer, e error) {
 		c := &testCloser{}
 		c.id = atomic.AddInt64(&id, 1)
+		c.closed = false
 		closer = c
 		return
 	}
@@ -50,8 +52,14 @@ func testErrHandler() ErrorHandler {
 	}
 }
 
+func testConnTestFunc() ConnTestFunc {
+	return func(closer io.Closer) bool {
+		return !closer.(*testCloser).closed
+	}
+}
+
 func TestNewPool(t *testing.T) {
-	pool, _ := NewPool(testFactory(), testErrHandler())
+	pool, _ := NewPool(testFactory(), testErrHandler(), testConnTestFunc())
 
 	conn, err := pool.Acquire()
 	if err != nil {
@@ -62,14 +70,14 @@ func TestNewPool(t *testing.T) {
 		t.Error("")
 	}
 
-	pool.Release(conn, nil)
+	pool.Release(conn)
 
 	if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
 		t.Error("")
 	}
 	pool.Shutdown()
 
-	pool, _ = NewPool(testFactory(), testErrHandler(), OptionMaxOpen(2))
+	pool, _ = NewPool(testFactory(), testErrHandler(), testConnTestFunc(), OptionMaxOpen(2))
 
 	if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
 		t.Error("")
@@ -92,25 +100,29 @@ func TestNewPool(t *testing.T) {
 		t.Error("")
 	}
 
-	pool.Release(conn1, errors.New("test"))
-
-	if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
+	pool.Release(conn1)
+	conn1.(*testCloser).closed = true
+	if pool.numOpen != 2 || len(pool.queue) != 1 || len(pool.pool) != 2 {
 		t.Error("")
 	}
 
 	pool.Close(conn2)
 
-	if pool.numOpen != 0 || len(pool.queue) != 0 || len(pool.pool) != 0 {
+	if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
 		t.Error("")
 	}
 
-	conn1, err = pool.Acquire()
+	conn3, err := pool.Acquire()
 	if err != nil {
 		t.Error(err)
 	}
 
 	if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
 		t.Error("")
+	}
+
+	if conn3.(*testCloser).closed {
+		t.Error("获取已关闭连接")
 	}
 
 }
