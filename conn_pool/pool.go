@@ -189,14 +189,9 @@ func (p *Pool) connExpiredWithNoLock(closer io.Closer) (r bool) {
 }
 
 // 释放单个资源到连接池
-func (p *Pool) Release(closer io.Closer, err error) {
+func (p *Pool) Release(closer io.Closer) {
 	p.Lock()
 	defer p.Unlock()
-
-	if err != nil {
-		p.closeWithNoLock(closer)
-		return
-	}
 
 	if p.connExpiredWithNoLock(closer) {
 		return
