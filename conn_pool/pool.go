@@ -15,8 +15,14 @@ var (
 	ErrConnFactory    = errors.New("ConnFactory error")
 )
 
+// 创建连接的方法
 type ConnFactory func() (io.Closer, error)
+
+// 错误处理
 type ErrorHandler func(err error)
+
+// 判断连接是否可用
+type ConnTestFunc func(closer io.Closer) bool
 
 type Pool struct {
 	sync.Mutex
@@ -38,6 +44,7 @@ type config struct {
 	errorHandler        ErrorHandler  // 错误处理
 	connMaxAliveTime    time.Duration // 连接最大存活时间
 	getConnWaitDeadline time.Duration // 获取连接最大等待时间
+	connTestFunc        ConnTestFunc  // 判断连接是否可用
 }
 
 type Option interface {
@@ -72,7 +79,7 @@ func (o OptionGetConnWaitDeadline) set(config *config) {
 	config.getConnWaitDeadline = time.Duration(o)
 }
 
-func NewPool(factory ConnFactory, errorHandler ErrorHandler, options ...Option) (*Pool, error) {
+func NewPool(factory ConnFactory, errorHandler ErrorHandler, connTestFunc ConnTestFunc, options ...Option) (*Pool, error) {
 	cfg := &config{
 		maxOpen:             1,
 		minOpen:             1,
@@ -80,6 +87,7 @@ func NewPool(factory ConnFactory, errorHandler ErrorHandler, options ...Option) 
 		getConnWaitDeadline: time.Minute,
 		factory:             factory,
 		errorHandler:        errorHandler,
+		connTestFunc:        connTestFunc,
 	}
 
 	for _, v := range options {
@@ -106,21 +114,22 @@ func (p *Pool) Acquire() (io.Closer, error) {
 	if p.closed {
 		return nil, ErrPoolClosed
 	}
-
-	select {
-	case closer := <-p.queue:
-		return closer, nil
-	case <-time.After(p.config.getConnWaitDeadline):
-		return nil, ErrGetConnTimeout
-	default:
-		go p.create()
+	go p.create()
+	for {
 		select {
 		case closer := <-p.queue:
+			if !p.config.connTestFunc(closer) {
+				p.Close(closer)
+				go p.create()
+				continue
+			}
+
 			return closer, nil
 		case <-time.After(p.config.getConnWaitDeadline):
 			return nil, ErrGetConnTimeout
 		}
 	}
+
 }
 
 func (p *Pool) create() {
@@ -128,10 +137,6 @@ func (p *Pool) create() {
 	defer p.Unlock()
 	if p.closed {
 		return
-	}
-
-	if len(p.queue) > 0 {
-
 	}
 
 	if p.numOpen >= p.config.maxOpen {
