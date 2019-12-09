@@ -36,7 +36,7 @@ func TestIntervalWork_Run(t *testing.T) {
 			go work.Run()
 			<-time.After(time.Second * 2)
 			work.Stop()
-			<-time.After(time.Second * 3)
+			work.Join()
 
 			if tt.testStruct.iter != 2 {
 				t.Errorf("循环次数错误want（%d）real(%d)", 2, tt.testStruct.iter)

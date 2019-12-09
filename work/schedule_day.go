@@ -14,6 +14,9 @@ func (s *ScheduleDayWork) loop() {
 }
 
 func (s *ScheduleDayWork) Run() {
+	defer func() {
+		s.stopped <- true
+	}()
 	for {
 		now := time.Now()
 		// 计算下一个零点
@@ -31,4 +34,7 @@ func (s *ScheduleDayWork) Run() {
 }
 func (s *ScheduleDayWork) Stop() {
 	s.cancel()
+}
+func (s *ScheduleDayWork) Join() {
+	<-s.stopped
 }

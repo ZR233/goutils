@@ -14,6 +14,9 @@ func (i *IntervalWork) loop() {
 }
 
 func (i *IntervalWork) Run() {
+	defer func() {
+		i.stopped <- true
+	}()
 	for {
 		select {
 		case <-i.ctx.Done():
@@ -25,4 +28,7 @@ func (i *IntervalWork) Run() {
 }
 func (i *IntervalWork) Stop() {
 	i.cancel()
+}
+func (i *IntervalWork) Join() {
+	<-i.stopped
 }

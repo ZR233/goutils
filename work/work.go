@@ -14,6 +14,7 @@ import (
 type Work interface {
 	Run()
 	Stop()
+	Join()
 }
 
 type OnError func(err error)
@@ -23,6 +24,7 @@ type workBase struct {
 	onError     OnError
 	ctx         context.Context
 	cancel      context.CancelFunc
+	stopped     chan bool
 }
 
 func loopDefer(onError OnError) {
@@ -36,6 +38,7 @@ func loopDefer(onError OnError) {
 }
 
 func initWorkBase(workBase *workBase, workHandler func(), onError OnError) {
+	workBase.stopped = make(chan bool)
 	workBase.onError = onError
 	workBase.ctx, workBase.cancel = context.WithCancel(context.Background())
 	workBase.workHandler = workHandler
