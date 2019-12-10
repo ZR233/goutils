@@ -27,12 +27,14 @@ type ConnTestFunc func(closer io.Closer) bool
 
 type Pool struct {
 	sync.Mutex
-	pool    map[io.Closer]*connStatus
-	queue   chan io.Closer
-	numOpen int // 当前池中资源数
-	ctx     context.Context
-	cancel  context.CancelFunc
-	config  *config
+	pool       map[io.Closer]*connStatus
+	queue      chan io.Closer
+	numOpen    int // 当前池中资源数
+	ctx        context.Context
+	cancel     context.CancelFunc
+	config     *config
+	createConn chan bool
+	stop       bool
 }
 
 type connStatus struct {
@@ -101,9 +103,11 @@ func NewPool(factory ConnFactory, errorHandler ErrorHandler, connTestFunc ConnTe
 		return nil, ErrInvalidConfig
 	}
 	p := &Pool{
-		config: cfg,
-		pool:   map[io.Closer]*connStatus{},
-		queue:  make(chan io.Closer, cfg.maxOpen),
+		config:     cfg,
+		pool:       map[io.Closer]*connStatus{},
+		queue:      make(chan io.Closer, cfg.maxOpen),
+		createConn: make(chan bool, 1),
+		stop:       false,
 	}
 
 	p.ctx, p.cancel = context.WithCancel(context.Background())
@@ -112,13 +116,15 @@ func NewPool(factory ConnFactory, errorHandler ErrorHandler, connTestFunc ConnTe
 		p.release()
 	}()
 
-	//p.create()
+	go p.createThread()
 
 	return p, nil
 }
 
 func (p *Pool) Acquire() (io.Closer, error) {
-
+	if p.stop {
+		return nil, ErrPoolClosed
+	}
 	select {
 	case <-p.ctx.Done():
 		return nil, ErrPoolClosed
@@ -135,7 +141,9 @@ func (p *Pool) Acquire() (io.Closer, error) {
 	wait := time.After(p.config.getConnWaitDeadline)
 
 	for {
-
+		if p.stop {
+			return nil, ErrPoolClosed
+		}
 		select {
 		case <-p.ctx.Done():
 			return nil, ErrPoolClosed
@@ -148,6 +156,24 @@ func (p *Pool) Acquire() (io.Closer, error) {
 			<-time.After(time.Millisecond * 20)
 		case <-wait:
 			return nil, ErrGetConnTimeout
+		}
+	}
+}
+
+func (p *Pool) createLazy() {
+	for {
+		if p.stop {
+			return
+		}
+		finish := false
+		select {
+		case <-p.ctx.Done():
+			return
+		default:
+			finish = p.createOneLazyFinish()
+		}
+		if finish {
+			break
 		}
 	}
 }
@@ -171,28 +197,60 @@ func (p *Pool) createOne() {
 	p.queue <- closer
 }
 
-func (p *Pool) createWithNoLock() {
+func (p *Pool) createOneLazyFinish() bool {
+	p.Lock()
+	defer p.Unlock()
 
 	if p.numOpen >= p.config.maxOpen {
-		return
+		return true
+	}
+
+	if p.numOpen >= p.config.minOpen && len(p.queue) > 0 {
+		return true
 	}
 
 	p.createOne()
+	return false
+}
 
-	for p.numOpen < p.config.minOpen {
-		p.createOne()
+func (p *Pool) createThread() {
+	for {
+		if p.stop {
+			return
+		}
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-p.createConn:
+			p.createLazy()
+			break
+		case <-time.After(time.Millisecond * 500):
+			p.createLazy()
+			break
+
+		}
 	}
 }
 
 func (p *Pool) create() {
-	p.Lock()
-	defer p.Unlock()
-	p.createWithNoLock()
+	defer func() {
+		recover()
+	}()
+
+	select {
+	case p.createConn <- true:
+	default:
+		return
+	}
 }
 
 func (p *Pool) CloseOne(closer io.Closer) {
 	p.Lock()
 	defer p.Unlock()
+	if p.stop {
+		return
+	}
+
 	p.closeWithNoLock(closer)
 }
 func (p *Pool) closeWithNoLock(closer io.Closer) {
@@ -222,6 +280,9 @@ func (p *Pool) connExpiredWithNoLock(closer io.Closer) (r bool) {
 func (p *Pool) Release(closer io.Closer) {
 	p.Lock()
 	defer p.Unlock()
+	if p.stop {
+		return
+	}
 
 	if p.connExpiredWithNoLock(closer) {
 		return
@@ -243,6 +304,7 @@ func (p *Pool) Release(closer io.Closer) {
 func (p *Pool) release() {
 	p.Lock()
 	defer p.Unlock()
+	p.stop = true
 	close(p.queue)
 	p.queue = nil
 	for closer := range p.pool {

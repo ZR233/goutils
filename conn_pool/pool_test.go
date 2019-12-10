@@ -3,8 +3,10 @@ package conn_pool
 import (
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"reflect"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -77,95 +79,120 @@ func TestPool_NewPool(t *testing.T) {
 		conn3 io.Closer
 		err   error
 	)
-	t.Run("获取一个连接", func(t *testing.T) {
-		conn1, err = pool.Acquire()
-		if err != nil {
-			t.Error(err)
-		}
 
-		if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
-			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
-		}
-	})
+	conn1, err = pool.Acquire()
+	if err != nil {
+		t.Error(err)
+	}
 
-	t.Run("释放一个连接", func(t *testing.T) {
-		pool.Release(conn1)
+	if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
+		t.Error(fmt.Sprintf("获取一个连接:numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+		return
+	}
 
-		if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
-			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
-		}
-	})
+	pool.Release(conn1)
 
-	t.Run("关闭", func(t *testing.T) {
-		_ = pool.Close()
-		<-time.After(time.Second)
-		if pool.numOpen != 0 || len(pool.queue) != 0 || len(pool.pool) != 0 {
-			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
-		}
-	})
+	if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
+		t.Error(fmt.Sprintf("释放一个连接:numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+		return
+	}
 
-	t.Run("获取2个连接", func(t *testing.T) {
-		pool, _ = NewPool(testFactory(), testErrHandler(), testConnTestFunc(), OptionMaxOpen(2))
+	_ = pool.Close()
+	<-time.After(time.Second)
+	if pool.numOpen != 0 || len(pool.queue) != 0 || len(pool.pool) != 0 {
+		t.Error(fmt.Sprintf("关闭: numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+	}
 
-		if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
-			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
-			return
-		}
+	pool, _ = NewPool(testFactory(), testErrHandler(), testConnTestFunc(), OptionMaxOpen(3))
+	//<-time.After(time.Millisecond * 200)
+	//if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
+	//	t.Error(fmt.Sprintf("获取2个连接池: numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+	//	return
+	//}
 
-		conn1, err = pool.Acquire()
-		if err != nil {
-			t.Error(err)
-			return
-		}
-		if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
-			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
-			return
-		}
+	conn1, err = pool.Acquire()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+	if pool.numOpen != 2 || len(pool.queue) != 1 || len(pool.pool) != 2 {
+		t.Error(fmt.Sprintf("获取第1个连接 numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+		return
+	}
 
-		conn2, err = pool.Acquire()
-		if err != nil {
-			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
-			return
-		}
+	conn2, err = pool.Acquire()
+	if err != nil {
+		t.Error(err)
+		return
+	}
 
-		if pool.numOpen != 2 || len(pool.queue) != 0 || len(pool.pool) != 2 {
-			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
-			return
-		}
-	})
+	if pool.numOpen != 2 || len(pool.queue) != 0 || len(pool.pool) != 2 {
+		t.Error(fmt.Sprintf("获取第2个连接 numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+		return
+	}
 
-	t.Run("释放一个", func(t *testing.T) {
-		pool.Release(conn1)
-		conn1.(*testCloser).closed = true
-		if pool.numOpen != 2 || len(pool.queue) != 1 || len(pool.pool) != 2 {
-			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
-			return
-		}
-	})
+	pool.Release(conn1)
+	conn1.(*testCloser).closed = true
+	if pool.numOpen != 2 || len(pool.queue) != 1 || len(pool.pool) != 2 {
+		t.Error(fmt.Sprintf("释放一个 numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+		return
+	}
 
-	t.Run("关闭一个，再获取可用连接", func(t *testing.T) {
-		pool.CloseOne(conn2)
+	pool.CloseOne(conn2)
 
-		if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
-			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
-			return
-		}
+	if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
+		t.Error(fmt.Sprintf("关闭一个 numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+		return
+	}
+	conn1, err = pool.Acquire()
+	conn2, err = pool.Acquire()
+	conn3, err = pool.Acquire()
+	if err != nil {
+		t.Error(err)
+		return
+	}
 
-		conn3, err = pool.Acquire()
-		if err != nil {
-			t.Error(err)
-			return
-		}
+	if pool.numOpen != 3 || len(pool.queue) != 0 || len(pool.pool) != 3 {
+		t.Error(fmt.Sprintf("再获取可用连接 numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+		return
+	}
+	if conn1.(*testCloser).closed {
+		t.Error("获取已关闭连接")
+	}
+	if conn2.(*testCloser).closed {
+		t.Error("获取已关闭连接")
+	}
+	if conn3.(*testCloser).closed {
+		t.Error("获取已关闭连接")
+	}
+}
 
-		if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
-			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
-			return
-		}
+func TestPool_Pressure(t *testing.T) {
+	pool, _ := NewPool(testFactory(), testErrHandler(), testConnTestFunc(), OptionMaxOpen(10))
 
-		if conn3.(*testCloser).closed {
-			t.Error("获取已关闭连接")
-		}
-	})
+	thread := 2000
+
+	wg := sync.WaitGroup{}
+
+	for i := 0; i < thread; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := pool.Acquire()
+			if err != nil {
+				t.Error(err)
+			}
+			defer pool.Release(conn)
+			n := time.Duration(rand.Intn(10))
+
+			<-time.After(time.Millisecond * (20 + n))
+
+		}()
+	}
+	wg.Wait()
+	if pool.numOpen != 10 || len(pool.queue) != 10 || len(pool.pool) != 10 {
+		t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+	}
 
 }
 
