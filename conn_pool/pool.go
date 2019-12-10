@@ -183,8 +183,12 @@ func (p *Pool) createOne() {
 	closer, err := p.config.factory()
 	if err != nil {
 		go p.config.errorHandler(err)
-		<-time.After(time.Millisecond * 200)
-		return
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-time.After(time.Millisecond * 200):
+			return
+		}
 	}
 	if closer == nil {
 		panic(fmt.Errorf("%w:\nfunc success but conn is nil", ErrConnFactory))
