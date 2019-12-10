@@ -106,7 +106,7 @@ func NewPool(factory ConnFactory, errorHandler ErrorHandler, connTestFunc ConnTe
 		config:     cfg,
 		pool:       map[io.Closer]*connStatus{},
 		queue:      make(chan io.Closer, cfg.maxOpen),
-		createConn: make(chan bool, 1),
+		createConn: make(chan bool, cfg.maxOpen),
 		stop:       false,
 	}
 
