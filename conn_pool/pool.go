@@ -1,6 +1,7 @@
 package conn_pool
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -28,8 +29,9 @@ type Pool struct {
 	sync.Mutex
 	pool    map[io.Closer]*connStatus
 	queue   chan io.Closer
-	numOpen int  // 当前池中资源数
-	closed  bool // 池是否已关闭
+	numOpen int // 当前池中资源数
+	ctx     context.Context
+	cancel  context.CancelFunc
 	config  *config
 }
 
@@ -85,7 +87,7 @@ func NewPool(factory ConnFactory, errorHandler ErrorHandler, connTestFunc ConnTe
 		maxOpen:             1,
 		minOpen:             1,
 		connMaxAliveTime:    time.Hour,
-		getConnWaitDeadline: time.Minute,
+		getConnWaitDeadline: time.Second * 5,
 		factory:             factory,
 		errorHandler:        errorHandler,
 		connTestFunc:        connTestFunc,
@@ -104,36 +106,47 @@ func NewPool(factory ConnFactory, errorHandler ErrorHandler, connTestFunc ConnTe
 		queue:  make(chan io.Closer, cfg.maxOpen),
 	}
 
-	p.create()
+	p.ctx, p.cancel = context.WithCancel(context.Background())
+	go func() {
+		<-p.ctx.Done()
+		p.release()
+	}()
+
+	//p.create()
 
 	return p, nil
 }
 
 func (p *Pool) Acquire() (io.Closer, error) {
-	if p.closed {
-		return nil, ErrPoolClosed
-	}
+
 	select {
+	case <-p.ctx.Done():
+		return nil, ErrPoolClosed
 	case closer := <-p.queue:
 		if p.config.connTestFunc(closer) {
 			return closer, nil
 		} else {
-			p.Close(closer)
+			p.CloseOne(closer)
 		}
 	default:
 	}
 
 	p.create()
+	wait := time.After(p.config.getConnWaitDeadline)
+
 	for {
+
 		select {
+		case <-p.ctx.Done():
+			return nil, ErrPoolClosed
 		case closer := <-p.queue:
 			if p.config.connTestFunc(closer) {
 				return closer, nil
 			}
-			p.Close(closer)
+			p.CloseOne(closer)
 			p.create()
-
-		case <-time.After(p.config.getConnWaitDeadline):
+			<-time.After(time.Millisecond * 20)
+		case <-wait:
 			return nil, ErrGetConnTimeout
 		}
 	}
@@ -159,9 +172,6 @@ func (p *Pool) createOne() {
 }
 
 func (p *Pool) createWithNoLock() {
-	if p.closed {
-		return
-	}
 
 	if p.numOpen >= p.config.maxOpen {
 		return
@@ -180,7 +190,7 @@ func (p *Pool) create() {
 	p.createWithNoLock()
 }
 
-func (p *Pool) Close(closer io.Closer) {
+func (p *Pool) CloseOne(closer io.Closer) {
 	p.Lock()
 	defer p.Unlock()
 	p.closeWithNoLock(closer)
@@ -195,12 +205,14 @@ func (p *Pool) closeWithNoLock(closer io.Closer) {
 }
 
 func (p *Pool) connExpiredWithNoLock(closer io.Closer) (r bool) {
-
 	if closer != nil {
-		status := p.pool[closer]
-		if time.Now().Sub(status.createTime) >= p.config.connMaxAliveTime {
-			p.closeWithNoLock(closer)
-			r = true
+		if p.pool != nil {
+			if status, ok := p.pool[closer]; ok {
+				if time.Now().Sub(status.createTime) >= p.config.connMaxAliveTime {
+					p.closeWithNoLock(closer)
+					r = true
+				}
+			}
 		}
 	}
 	return
@@ -220,24 +232,26 @@ func (p *Pool) Release(closer io.Closer) {
 	}
 
 	select {
+	case <-p.ctx.Done():
+		return
 	case p.queue <- closer:
 	default:
 		return
 	}
 }
 
-// 关闭连接池，释放所有资源
-func (p *Pool) Shutdown() error {
-	if p.closed {
-		return ErrPoolClosed
-	}
+func (p *Pool) release() {
 	p.Lock()
 	defer p.Unlock()
 	close(p.queue)
-
+	p.queue = nil
 	for closer := range p.pool {
 		p.closeWithNoLock(closer)
 	}
-	p.closed = true
+}
+
+// 关闭连接池，释放所有资源
+func (p *Pool) Close() error {
+	p.cancel()
 	return nil
 }

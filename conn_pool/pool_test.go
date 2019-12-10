@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"sync"
+	"reflect"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestPool_Release(t *testing.T) {
@@ -45,6 +46,15 @@ func testFactory() ConnFactory {
 		return
 	}
 }
+func testConnFailFactory() ConnFactory {
+	return func() (closer io.Closer, e error) {
+		c := &testCloser{}
+		c.id = atomic.AddInt64(&id, 1)
+		c.closed = true
+		closer = c
+		return
+	}
+}
 
 func testErrHandler() ErrorHandler {
 	return func(err error) {
@@ -58,107 +68,128 @@ func testConnTestFunc() ConnTestFunc {
 	}
 }
 
-func TestNewPool(t *testing.T) {
+func TestPool_NewPool(t *testing.T) {
 	pool, _ := NewPool(testFactory(), testErrHandler(), testConnTestFunc())
+	defer pool.Close()
+	var (
+		conn1 io.Closer
+		conn2 io.Closer
+		conn3 io.Closer
+		err   error
+	)
+	t.Run("获取一个连接", func(t *testing.T) {
+		conn1, err = pool.Acquire()
+		if err != nil {
+			t.Error(err)
+		}
 
-	conn, err := pool.Acquire()
-	if err != nil {
-		t.Error(err)
-	}
+		if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
+			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+		}
+	})
 
-	if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
-		t.Error("")
-	}
+	t.Run("释放一个连接", func(t *testing.T) {
+		pool.Release(conn1)
 
-	pool.Release(conn)
+		if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
+			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+		}
+	})
 
-	if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
-		t.Error("")
-	}
-	pool.Shutdown()
+	t.Run("关闭", func(t *testing.T) {
+		_ = pool.Close()
+		<-time.After(time.Second)
+		if pool.numOpen != 0 || len(pool.queue) != 0 || len(pool.pool) != 0 {
+			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+		}
+	})
 
-	pool, _ = NewPool(testFactory(), testErrHandler(), testConnTestFunc(), OptionMaxOpen(2))
+	t.Run("获取2个连接", func(t *testing.T) {
+		pool, _ = NewPool(testFactory(), testErrHandler(), testConnTestFunc(), OptionMaxOpen(2))
 
-	if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
-		t.Error("")
-	}
+		if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
+			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+			return
+		}
 
-	conn1, err := pool.Acquire()
-	if err != nil {
-		t.Error(err)
-	}
-	if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
-		t.Error("")
-	}
+		conn1, err = pool.Acquire()
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
+			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+			return
+		}
 
-	conn2, err := pool.Acquire()
-	if err != nil {
-		t.Error(err)
-	}
+		conn2, err = pool.Acquire()
+		if err != nil {
+			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+			return
+		}
 
-	if pool.numOpen != 2 || len(pool.queue) != 0 || len(pool.pool) != 2 {
-		t.Error("")
-	}
+		if pool.numOpen != 2 || len(pool.queue) != 0 || len(pool.pool) != 2 {
+			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+			return
+		}
+	})
 
-	pool.Release(conn1)
-	conn1.(*testCloser).closed = true
-	if pool.numOpen != 2 || len(pool.queue) != 1 || len(pool.pool) != 2 {
-		t.Error("")
-	}
+	t.Run("释放一个", func(t *testing.T) {
+		pool.Release(conn1)
+		conn1.(*testCloser).closed = true
+		if pool.numOpen != 2 || len(pool.queue) != 1 || len(pool.pool) != 2 {
+			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+			return
+		}
+	})
 
-	pool.Close(conn2)
+	t.Run("关闭一个，再获取可用连接", func(t *testing.T) {
+		pool.CloseOne(conn2)
 
-	if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
-		t.Error("")
-	}
+		if pool.numOpen != 1 || len(pool.queue) != 1 || len(pool.pool) != 1 {
+			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+			return
+		}
 
-	conn3, err := pool.Acquire()
-	if err != nil {
-		t.Error(err)
-	}
+		conn3, err = pool.Acquire()
+		if err != nil {
+			t.Error(err)
+			return
+		}
 
-	if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
-		t.Error("")
-	}
+		if pool.numOpen != 1 || len(pool.queue) != 0 || len(pool.pool) != 1 {
+			t.Error(fmt.Sprintf("numOpen %d queue len %d pool len %d ", pool.numOpen, len(pool.queue), len(pool.pool)))
+			return
+		}
 
-	if conn3.(*testCloser).closed {
-		t.Error("获取已关闭连接")
-	}
+		if conn3.(*testCloser).closed {
+			t.Error("获取已关闭连接")
+		}
+	})
 
 }
 
-func TestPool_connExpired(t *testing.T) {
-	type fields struct {
-		Mutex   sync.Mutex
-		pool    map[io.Closer]*connStatus
-		queue   chan io.Closer
-		numOpen int
-		closed  bool
-		config  *config
-	}
-	type args struct {
-		closer io.Closer
-	}
+func TestPool_Acquire(t *testing.T) {
+	pool, _ := NewPool(testConnFailFactory(), testErrHandler(), testConnTestFunc(), OptionMaxOpen(2))
+
 	tests := []struct {
-		name   string
-		fields fields
-		args   args
-		wantR  bool
+		name    string
+		pool    *Pool
+		want    io.Closer
+		wantErr bool
 	}{
-		// TODO: Add test cases.
+		{"从非正常服务器获取连接", pool, nil, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			p := &Pool{
-				Mutex:   tt.fields.Mutex,
-				pool:    tt.fields.pool,
-				queue:   tt.fields.queue,
-				numOpen: tt.fields.numOpen,
-				closed:  tt.fields.closed,
-				config:  tt.fields.config,
+
+			got, err := tt.pool.Acquire()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Acquire() error = %v, wantErr %v", err, tt.wantErr)
+				return
 			}
-			if gotR := p.connExpiredWithNoLock(tt.args.closer); gotR != tt.wantR {
-				t.Errorf("connExpiredWithNoLock() = %v, want %v", gotR, tt.wantR)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("Acquire() got = %v, want %v", got, tt.want)
 			}
 		})
 	}
