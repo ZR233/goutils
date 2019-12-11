@@ -15,16 +15,18 @@ type Work interface {
 	Run()
 	Stop()
 	Join()
+	getWorkBase() *workBase
 }
 
 type OnError func(err error)
+type LoopFunc func(ctx context.Context) (err error)
 
 type workBase struct {
-	workHandler func()
-	onError     OnError
-	ctx         context.Context
-	cancel      context.CancelFunc
-	stopped     chan bool
+	loopFunc LoopFunc
+	onError  OnError
+	ctx      context.Context
+	cancel   context.CancelFunc
+	stopped  chan bool
 }
 
 func loopDefer(onError OnError) {
@@ -37,29 +39,47 @@ func loopDefer(onError OnError) {
 	}
 }
 
-func initWorkBase(workBase *workBase, workHandler func(), onError OnError) {
+func initWork(work Work, loopFunc LoopFunc, onError OnError) {
+	workBase := work.getWorkBase()
 	workBase.stopped = make(chan bool)
 	workBase.onError = onError
 	workBase.ctx, workBase.cancel = context.WithCancel(context.Background())
-	workBase.workHandler = workHandler
+	workBase.loopFunc = loopFunc
+
+	go func() {
+		defer func() {
+			workBase.stopped <- true
+		}()
+		work.Run()
+	}()
 }
 
-func RegisterNewWork(intervalTime time.Duration, workHandler func(), onError OnError) *IntervalWork {
+func RegisterNewWork(intervalTime time.Duration, loopFunc LoopFunc, onError OnError) *IntervalWork {
 	work := &IntervalWork{
 		intervalTime: intervalTime,
 	}
-	initWorkBase(&work.workBase, workHandler, onError)
+	initWork(work, loopFunc, onError)
 
-	go work.Run()
 	return work
 }
 
-func RegisterScheduleDayWork(schedule time.Time, workHandler func(), onError OnError) *ScheduleDayWork {
+func RegisterScheduleDayWork(schedule time.Time, loopFunc LoopFunc, onError OnError) *ScheduleDayWork {
 
 	work := &ScheduleDayWork{
 		ScheduleTime: schedule,
 	}
-	initWorkBase(&work.workBase, workHandler, onError)
-	go work.Run()
+	initWork(work, loopFunc, onError)
+
 	return work
+}
+
+func (w *workBase) getWorkBase() *workBase {
+	return w
+}
+
+func (w *workBase) Stop() {
+	w.cancel()
+}
+func (w *workBase) Join() {
+	<-w.stopped
 }

@@ -1,6 +1,7 @@
 package work
 
 import (
+	"context"
 	"log"
 	"testing"
 	"time"
@@ -16,9 +17,10 @@ type testWorkHandler struct {
 	iter int
 }
 
-func (t *testWorkHandler) getFunc() func() {
-	return func() {
+func (t *testWorkHandler) getFunc() LoopFunc {
+	return func(ctx context.Context) (err error) {
 		t.iter++
+		return
 	}
 }
 
@@ -38,6 +40,7 @@ func TestIntervalWork_Run(t *testing.T) {
 			work.Stop()
 			work.Join()
 
+			<-time.After(time.Second * 5)
 			if tt.testStruct.iter != 2 {
 				t.Errorf("循环次数错误want（%d）real(%d)", 2, tt.testStruct.iter)
 			}

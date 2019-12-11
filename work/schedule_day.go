@@ -10,13 +10,14 @@ type ScheduleDayWork struct {
 
 func (s *ScheduleDayWork) loop() {
 	defer loopDefer(s.onError)
-	s.workHandler()
+	err := s.loopFunc(s.ctx)
+	if err != nil {
+		s.onError(err)
+	}
 }
 
 func (s *ScheduleDayWork) Run() {
-	defer func() {
-		s.stopped <- true
-	}()
+
 	for {
 		now := time.Now()
 		// 计算下一个零点
@@ -31,10 +32,4 @@ func (s *ScheduleDayWork) Run() {
 			s.loop()
 		}
 	}
-}
-func (s *ScheduleDayWork) Stop() {
-	s.cancel()
-}
-func (s *ScheduleDayWork) Join() {
-	<-s.stopped
 }

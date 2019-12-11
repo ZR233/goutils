@@ -10,13 +10,14 @@ type IntervalWork struct {
 
 func (i *IntervalWork) loop() {
 	defer loopDefer(i.onError)
-	i.workHandler()
+	err := i.loopFunc(i.ctx)
+	if err != nil {
+		i.onError(err)
+	}
 }
 
 func (i *IntervalWork) Run() {
-	defer func() {
-		i.stopped <- true
-	}()
+
 	for {
 		select {
 		case <-i.ctx.Done():
@@ -25,10 +26,4 @@ func (i *IntervalWork) Run() {
 			i.loop()
 		}
 	}
-}
-func (i *IntervalWork) Stop() {
-	i.cancel()
-}
-func (i *IntervalWork) Join() {
-	<-i.stopped
 }
