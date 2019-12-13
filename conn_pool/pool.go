@@ -120,6 +120,27 @@ func NewPool(factory ConnFactory, errorHandler ErrorHandler, connTestFunc ConnTe
 
 	return p, nil
 }
+func (p *Pool) connOK(closer io.Closer) (b bool) {
+	var err error
+	defer func() {
+		if pa := recover(); pa != nil {
+			err = fmt.Errorf("conn test panic:\n%s", pa)
+		}
+
+		if err != nil {
+			b = false
+			p.handleError(err)
+		}
+	}()
+
+	return p.config.connTestFunc(closer)
+}
+func (p *Pool) handleError(err error) {
+	defer func() {
+		recover()
+	}()
+	p.config.errorHandler(err)
+}
 
 func (p *Pool) Acquire() (io.Closer, error) {
 	if p.stop {
@@ -129,7 +150,7 @@ func (p *Pool) Acquire() (io.Closer, error) {
 	case <-p.ctx.Done():
 		return nil, ErrPoolClosed
 	case closer := <-p.queue:
-		if p.config.connTestFunc(closer) {
+		if p.connOK(closer) {
 			return closer, nil
 		} else {
 			p.CloseOne(closer)
@@ -148,7 +169,7 @@ func (p *Pool) Acquire() (io.Closer, error) {
 		case <-p.ctx.Done():
 			return nil, ErrPoolClosed
 		case closer := <-p.queue:
-			if p.config.connTestFunc(closer) {
+			if p.connOK(closer) {
 				return closer, nil
 			}
 			p.CloseOne(closer)
