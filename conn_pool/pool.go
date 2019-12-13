@@ -253,7 +253,6 @@ func (p *Pool) createThread() {
 		case <-time.After(time.Millisecond * 500):
 			p.createLazy()
 			break
-
 		}
 	}
 }
