@@ -32,7 +32,7 @@ type testCloser struct {
 }
 
 func (t *testCloser) Close() error {
-	fmt.Printf("%d close", t.id)
+	fmt.Printf("%d close\n", t.id)
 	t.closed = true
 	return nil
 }
@@ -41,10 +41,12 @@ var id = int64(0)
 
 func testFactory() ConnFactory {
 	return func() (closer io.Closer, e error) {
+
 		c := &testCloser{}
 		c.id = atomic.AddInt64(&id, 1)
 		c.closed = false
 		closer = c
+		println("new conn", c.id)
 		return
 	}
 }
@@ -220,4 +222,25 @@ func TestPool_Acquire(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPool_Expire(t *testing.T) {
+	pool, _ := NewPool(testFactory(), testErrHandler(), testConnTestFunc(), OptionMaxOpen(1), OptionConnMaxAliveTime(time.Second))
+
+	conn, err := pool.Acquire()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
+	time.Sleep(time.Second * 2)
+
+	pool.Release(conn)
+
+	conn, err = pool.Acquire()
+	if err != nil {
+		t.Error(err)
+		return
+	}
+
 }
