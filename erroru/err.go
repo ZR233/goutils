@@ -37,6 +37,14 @@ func Warp(err error) *StdError {
 	return AddInfo("", err)
 }
 
+func NewErr(msg string, warpCount int) *StdError {
+	stdErr := &StdError{
+		err:          nil,
+		msgWithTrace: fmt.Sprintln(fileLocation(2+warpCount) + "\t|" + msg),
+		msg:          msg,
+	}
+	return stdErr
+}
 func AddInfo(msg string, err error) *StdError {
 	stdErr := &StdError{
 		err:          err,
