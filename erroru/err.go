@@ -17,6 +17,12 @@ func Init(srcRootPath string) (err error) {
 	return
 }
 
+type ErrorWithTrace interface {
+	error
+	Unwrap() error
+	ErrorWithTrace() string
+}
+
 type StdError struct {
 	err          error
 	msg          string
@@ -53,9 +59,9 @@ func AddInfo(msg string, err error) *StdError {
 	}
 	return stdErr
 }
-func StdErrorFrom(err error) (stdErr *StdError) {
+func StdErrorFrom(err error) (stdErr ErrorWithTrace) {
 	ok := false
-	if stdErr, ok = err.(*StdError); !ok {
+	if stdErr, ok = err.(ErrorWithTrace); !ok {
 		stdErr = &StdError{
 			err:          err,
 			msg:          err.Error(),
