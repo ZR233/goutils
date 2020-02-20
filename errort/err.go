@@ -6,7 +6,6 @@ package errort
 
 import (
 	"errors"
-	"fmt"
 	"runtime/debug"
 	"strings"
 )
@@ -42,39 +41,41 @@ func NewFromError(err error, warpCount int) *StdError {
 	return stdErr
 }
 func NewErr(msg string, warpCount int) *StdError {
+	err := errors.New(msg)
 	stdErr := &StdError{
-		err:          errors.New(msg),
+		err:          err,
 		msgWithTrace: fileLocation(warpCount + 1),
-		msg:          msg,
+		msg:          msg + "\n" + err.Error(),
 	}
 	return stdErr
+}
+
+func GetStdError(err error) (stdErr *StdError) {
+	var errs []*StdError
+	for {
+		if err == nil {
+			break
+		}
+		ok := false
+		if stdErr, ok = err.(*StdError); ok {
+			errs = append(errs, stdErr)
+		}
+		err = errors.Unwrap(err)
+	}
+	l := len(errs)
+	if l > 0 {
+		stdErr = errs[l-1]
+	}
+	return
 }
 
 func GetTrace(err error) (trace string) {
 	if err == nil {
 		return
 	}
-	var (
-		stdErr ErrorWithTrace
-		errs   []ErrorWithTrace
-	)
-
-	for {
-		if err == nil {
-			break
-		}
-		ok := false
-		if stdErr, ok = err.(ErrorWithTrace); ok {
-			errs = append(errs, stdErr)
-		} else {
-			trace += fmt.Sprintln(err)
-		}
-		err = errors.Unwrap(err)
-	}
-
-	l := len(errs)
-	if l > 0 {
-		trace = errs[l-1].ErrorWithTrace()
+	stdErr := GetStdError(err)
+	if stdErr != nil {
+		trace = stdErr.ErrorWithTrace()
 	}
 	return
 }

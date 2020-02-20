@@ -7,7 +7,7 @@ import (
 )
 
 func TestErrorf(t *testing.T) {
-	Init("C:/Users/zrufo/go/src/github.com/ZR233/goutils")
+
 	errT := errors.New("test error")
 	err := warpedErr(errT)
 	err = fmt.Errorf("wrap error2%w", err)
@@ -16,4 +16,14 @@ func TestErrorf(t *testing.T) {
 	if errors.Is(err, errT) {
 		t.Log("ok")
 	}
+}
+
+func Test_getFirstErrorStd(t *testing.T) {
+	err := errors.New("test1")
+	err = fmt.Errorf("test2%w", err)
+	err = NewFromError(err, 0)
+	err = fmt.Errorf("test3%w", err)
+	//err2 := GetStdError(err)
+	println(err.Error())
+	//println(err2.Error())
 }
