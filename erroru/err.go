@@ -5,6 +5,7 @@
 package erroru
 
 import (
+	"errors"
 	"fmt"
 	"runtime/debug"
 	"strings"
@@ -42,10 +43,17 @@ func (s *StdError) Unwrap() error {
 func Warp(err error) *StdError {
 	return AddInfo("", err)
 }
-
+func NewErrFromError(err error, warpCount int) *StdError {
+	stdErr := &StdError{
+		err:          err,
+		msgWithTrace: fmt.Sprintln(fileLocation(2+warpCount) + "\t|" + err.Error()),
+		msg:          err.Error(),
+	}
+	return stdErr
+}
 func NewErr(msg string, warpCount int) *StdError {
 	stdErr := &StdError{
-		err:          nil,
+		err:          errors.New(msg),
 		msgWithTrace: fmt.Sprintln(fileLocation(2+warpCount) + "\t|" + msg),
 		msg:          msg,
 	}
