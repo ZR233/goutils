@@ -19,11 +19,12 @@ func (i *IntervalWork) loop() {
 func (i *IntervalWork) Run() {
 
 	for {
+		i.loop()
 		select {
 		case <-i.ctx.Done():
 			return
 		case <-time.After(i.intervalTime):
-			i.loop()
+
 		}
 	}
 }
