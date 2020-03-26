@@ -1,4 +1,4 @@
-package panicx
+package errorHelper
 
 import (
 	"bytes"
@@ -6,7 +6,7 @@ import (
 )
 
 func PanicTrace(kb int) []byte {
-	s := []byte("/src/runtime/panic.go")
+	s := []byte("errorHelper/panic.go")
 	e := []byte("\ngoroutine ")
 	line := []byte("\n")
 	stack := make([]byte, kb<<10) //4KB

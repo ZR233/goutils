@@ -1,4 +1,4 @@
-package panicx
+package errorHelper
 
 import (
 	"testing"
