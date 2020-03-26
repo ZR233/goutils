@@ -1,4 +1,4 @@
-package errorHelper
+package errorh
 
 import (
 	"errors"
