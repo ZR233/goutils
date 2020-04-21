@@ -41,6 +41,8 @@ func function(pc uintptr) []byte {
 
 // stack returns a nicely formatted stack frame, skipping skip frames.
 func Stack(skip int) []byte {
+	skip = 3 + skip
+
 	buf := new(bytes.Buffer) // the returned data
 	// As we loop, we open files and read them. These variables record the currently
 	// loaded file.

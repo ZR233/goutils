@@ -9,7 +9,10 @@ func hello(str string) {
 }
 
 func TestRecover(t *testing.T) {
-	defer Recover()
+	defer func() {
+		str := Stack(0)
+		t.Log(str)
+	}()
 
 	hello("param 1")
 
